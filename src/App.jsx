@@ -80,7 +80,13 @@ const initialInternal = [
 ];
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function money(value) {
@@ -151,7 +157,7 @@ function getDocumentText(doc) {
 function openPrintWindow(doc) {
   if (!doc) return;
 
-  const logoUrl = `${window.location.origin}/logo-peleteria.png`;
+  const logoUrl = `${window.location.origin}${import.meta.env.BASE_URL}logo-peleteria.png`;
   const bodyLines = getDocumentText(doc)
     .map((line) => `<p>${escapeHtml(line)}</p>`)
     .join("");
@@ -887,7 +893,7 @@ function PrintableDocument({ doc }) {
           <div className="print-top">
             <div className="print-brand-row">
               <div className="print-logo">
-                <img src="/logo-peleteria.png" alt="Logo Peletería Continental" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                <img src={`${import.meta.env.BASE_URL}logo-peleteria.png`} alt="Logo Peletería Continental" onError={(e) => { e.currentTarget.style.display = "none"; }} />
               </div>
               <div>
                 <span className="print-brand">{doc.empresa || "Peletería Continental"}</span>
