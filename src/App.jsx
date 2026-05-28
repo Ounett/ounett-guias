@@ -1,5 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 import {
   Upload,
   FileText,
@@ -92,6 +96,158 @@ function today() {
 function money(value) {
   const n = Number(value || 0);
   return `Q${n.toFixed(2)}`;
+}
+async function extractTextFromPdf(file) {
+  const arrayBuffer = await file.arrayBuffer();
+
+  const pdf = await pdfjsLib.getDocument({
+    data: arrayBuffer,
+  }).promise;
+
+  let fullText = "";
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+
+    const pageText = textContent.items
+      .map((item) => item.str)
+      .filter(Boolean)
+      .join("\n");
+
+    fullText += `\n--- Página ${pageNumber} ---\n${pageText}`;
+  }
+
+  console.log("TEXTO PDF:", fullText);
+
+  return fullText;
+}
+function findValue(text, patterns) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return "";
+}
+function parseGuatexPdfText(text) {
+  const cleanText = text
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n+/g, "\n")
+    .trim();
+
+  const flatText = cleanText.replace(/\s+/g, " ").trim();
+
+  function getAfterLabel(label) {
+    const lines = cleanText.split("\n").map((line) => line.trim()).filter(Boolean);
+
+    const normalizedLabel = label
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+    for (const line of lines) {
+      const normalizedLine = line
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+
+      if (normalizedLine.includes(normalizedLabel)) {
+        const parts = line.split(":");
+        if (parts.length > 1) {
+          return parts.slice(1).join(":").trim();
+        }
+      }
+    }
+
+    return "";
+  }
+
+  const guia =
+    findValue(flatText, [
+      /No\.?\s*Gu[ií]a[:\s]+([A-Z0-9]+)/i,
+      /\b(KU[A-Z0-9]{6,})\b/i,
+    ]) || getAfterLabel("No. Guia");
+
+  const fechaPdf =
+    findValue(flatText, [
+      /Fecha de creaci[oó]n[:\s]+(\d{2}\/\d{2}\/\d{4})/i,
+      /Fecha[:\s]+(\d{2}\/\d{2}\/\d{4})/i,
+    ]) || getAfterLabel("Fecha de creación");
+
+  const formaPago =
+    findValue(flatText, [
+      /Forma de pago[:\s]+([A-ZÁÉÍÓÚÑ ]+?)\s+Total piezas/i,
+      /Forma de pago[:\s]+([A-ZÁÉÍÓÚÑ ]+?)\s+Peso/i,
+    ]) || getAfterLabel("Forma de pago");
+
+  const piezas =
+    findValue(flatText, [
+      /Total piezas[:\s]+(\d+)/i,
+    ]) || getAfterLabel("Total piezas");
+
+  const peso =
+    findValue(flatText, [
+      /Peso[:\s]+([\d.]+)/i,
+    ]) || getAfterLabel("Peso");
+
+  const descripcion =
+    findValue(flatText, [
+      /Descripci[oó]n[:\s]+(.+?)\s+Llave de cliente/i,
+      /Descripci[oó]n[:\s]+(.+?)\s+Observaciones/i,
+    ]) || getAfterLabel("Descripción");
+
+  const remitente =
+    findValue(flatText, [
+      /Remitente[:\s]+(.+?)\s+Direcci[oó]n/i,
+    ]) || getAfterLabel("Remitente");
+
+  const destinatario =
+    findValue(flatText, [
+      /Destinatario[:\s]+(.+?)\s+Direcci[oó]n/i,
+    ]) || getAfterLabel("Destinatario");
+
+  const telefonos = [...flatText.matchAll(/Tel[eé]fono[:\s]+([\d\s-]+)/gi)].map((m) =>
+    m[1].trim()
+  );
+
+  const direcciones = [...flatText.matchAll(/Direcci[oó]n[:\s]+(.+?)(?=Contacto|Datos destinatario|Observaciones|$)/gi)].map((m) =>
+    m[1].trim()
+  );
+
+  function pdfDateToInputDate(value) {
+    if (!value) return today();
+
+    const match = value.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (!match) return today();
+
+    const [, day, month, year] = match;
+    return `${year}-${month}-${day}`;
+  }
+
+  return {
+    guia,
+    fecha: pdfDateToInputDate(fechaPdf),
+    remitente: remitente || "Peletería Continental",
+    destinatario,
+    destino: direcciones[1] || direcciones[0] || "",
+    telefono: telefonos[1] || telefonos[0] || "",
+    descripcion,
+    monto: "",
+    estado: "Registrada",
+    archivo: "",
+    extra: {
+      formaPago,
+      piezas,
+      peso,
+      telefonoRemitente: telefonos[0] || "",
+      direccionRemitente: direcciones[0] || "",
+    },
+    rawText: cleanText,
+  };
 }
 
 function defaultDocDraft(type = "Envío") {
@@ -384,7 +540,10 @@ export default function App() {
   const [selectedDoc, setSelectedDoc] = useState(initialInternal[0]);
   const [guideQuery, setGuideQuery] = useState("");
   const [internalQuery, setInternalQuery] = useState("");
+  const [pdfStatus, setPdfStatus] = useState("");
+  const [pdfRawText, setPdfRawText] = useState("");
   const [guideDraft, setGuideDraft] = useState({
+
     guia: "",
     fecha: today(),
     remitente: "Peletería Continental",
@@ -448,16 +607,42 @@ export default function App() {
       setSelectedDoc(first || null);
     }
   }
-
-  function handlePdfUpload(e) {
+  async function handlePdfUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setGuideDraft((prev) => ({
-      ...prev,
-      archivo: file.name,
-      descripcion: prev.descripcion || "PDF de guía Guatex pendiente de lectura automática",
-    }));
+    try {
+      setPdfStatus("Leyendo PDF de Guatex...");
+      setPdfRawText("");
+
+      const text = await extractTextFromPdf(file);
+      const parsed = parseGuatexPdfText(text);
+
+      setPdfRawText(parsed.rawText);
+
+      setGuideDraft((prev) => ({
+        ...prev,
+        ...parsed,
+        archivo: file.name,
+        descripcion:
+          parsed.descripcion ||
+          prev.descripcion ||
+          "PDF de guía Guatex leído, revisar campos.",
+      }));
+
+      setPdfStatus("PDF leído. Revisa los campos antes de guardar.");
+    } catch (error) {
+      console.error(error);
+
+      setGuideDraft((prev) => ({
+        ...prev,
+        archivo: file.name,
+        descripcion:
+          prev.descripcion || "PDF cargado, pero no se pudo leer automáticamente.",
+      }));
+
+      setPdfStatus("No se pudo leer el PDF automáticamente. Llena los campos manualmente.");
+    }
   }
 
   function saveGuide(e) {
@@ -582,7 +767,13 @@ export default function App() {
                 </Field>
 
                 {guideDraft.archivo && <div className="file-pill">PDF cargado: {guideDraft.archivo}</div>}
-
+                {pdfStatus && <div className="file-pill">{pdfStatus}</div>}
+                {pdfRawText && (
+                  <details className="pdf-debug">
+                    <summary>Ver texto leído del PDF</summary>
+                    <pre>{pdfRawText}</pre>
+                  </details>
+                )}
                 <div className="two-cols">
                   <Field label="No. guía">
                     <input placeholder="Ej. KU765M00000" value={guideDraft.guia} onChange={(e) => updateGuide("guia", e.target.value)} />

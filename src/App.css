@@ -929,3 +929,37 @@ select:disabled {
 .check-field input {
   width: auto;
 }
+
+.pdf-debug {
+  border-radius: 16px;
+  padding: 12px;
+  color: #cbd5e1;
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pdf-debug summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #bae6fd;
+}
+
+.pdf-debug pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
